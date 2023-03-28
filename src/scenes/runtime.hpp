@@ -49,7 +49,7 @@ class Runtime : public hg::Scene {
 public:
 
     Runtime():
-        m_deck(this),
+        m_playerDeck(this),
         m_actors(this),
         m_obstacles(this),
         m_props(this)
@@ -66,7 +66,8 @@ protected:
 
 private:
 
-    Deck m_deck;
+    Deck m_playerDeck;
+    std::vector<Card*> m_activePlayerCards;
 
     Dice<6> m_dice;
 
@@ -97,16 +98,17 @@ private:
     bool updatePlayer();
     void updateEnemies();
 
-    void renderMapAndActors();
-    void renderUI(double dt);
-
     void renderSprites();
     void renderText(double dt);
     void renderFocus();
 
+    void activateCard(hg::Entity* entity, CardType type);
+    void deactivateCard(hg::Entity* entity, CardType type);
+
     bool attack(hg::Entity* attacker, hg::Entity* enemy, bool& died);
 
     hg::Vec2i getMousePos();
+    hg::Vec2 getGlobalMousePos();
 
     double updateTime = 0;
     double renderTime = 0;
@@ -119,7 +121,7 @@ void Runtime::onInit() {
     m_uiCamera.size = m_resolution;
     m_camera.setResolution(m_resolution);
 
-    m_deck.pos = (CARD_SIZE * 0.6).resize<3>();
+    m_playerDeck.pos = (CARD_SIZE * 0.6).resize<3>();
 
     Windows::Events.subscribe(WindowEvents::Resize, [&](auto window) {
     });
@@ -132,11 +134,19 @@ void Runtime::onInit() {
 
     m_player = m_actors.add("balrug", hg::Vec2i(7, 2));
     m_player->getComponent<Actor>()->movement = 2;
+    m_player->getComponent<Actor>()->baseMovement = 2;
+    m_player->getComponent<Actor>()->strength = 10;
+    m_player->getComponent<Actor>()->name = "Player";
 
     m_camera.move(m_player->transform.position, 1);
 
     auto dwarf = m_actors.add("dwarf", hg::Vec2i(7, 7));
     dwarf->addComponent<MeleeEnemy>()->target = m_player;
+    dwarf->getComponent<Actor>()->name = "Dwarf";
+
+    auto elf = m_actors.add("elf", hg::Vec2i(2, 7));
+    elf->addComponent<MeleeEnemy>()->target = m_player;
+    elf->getComponent<Actor>()->name = "High Elf";
 
     for (int i = 0; i <= 10; i++) {
         m_obstacles.add("wall", hg::Vec2i(i, 0));
@@ -150,14 +160,6 @@ void Runtime::onInit() {
     m_obstacles.add("water", hg::Vec2i(5, 4));
     m_obstacles.add("water", hg::Vec2i(5, 5));
 
-    /*
-    for (int i = 1; i < 10; i++) {
-        for (int j = 1; j < 10; j++) {
-            m_props.add("floor", hg::Vec2i(i, j));
-        }
-    }
-    */
-
     m_focus = entities.add();
     m_focus->transform.position[2] = 1;
     m_focus->addComponent<Quad>(TILE_SIZE, TILE_SIZE * 0.5);
@@ -167,10 +169,10 @@ void Runtime::onInit() {
     m_pathFindingLine.thickness(3);
     m_pathFindingLineMesh = std::make_unique<MeshInstance>(&m_pathFindingLine);
 
-    for (int i = 0; i < 4; i++) {
-        m_deck.add(CardType::HealthPotion);
-    }
-
+    m_playerDeck.add(CardType::HealthPotion);
+    m_playerDeck.add(CardType::RunAway);
+    m_playerDeck.add(CardType::FireBlast);
+    m_playerDeck.add(CardType::Resurrect);
 
 }
 
@@ -200,6 +202,20 @@ void Runtime::onUpdate(double dt) {
     if (updatePlayer()) {
         updateEnemies();
         m_turn++;
+
+        std::vector<Card*> activeCards;
+
+        for (auto& card : m_activePlayerCards) {
+            card->turns++;
+            if (card->turns < CARD_TYPES[(int) card->type].turns) {
+                activeCards.push_back(card);
+            } else {
+                deactivateCard(m_player, card->type);
+                m_playerDeck.discard(card);
+            }
+        }
+
+        m_activePlayerCards = activeCards;
     }
 
     updateTime = hg::utils::Clock::ToSeconds(hg::utils::Clock::Now() - now);
@@ -273,15 +289,32 @@ bool Runtime::updatePlayer() {
 
     auto mousePos = getMousePos();
 
+    m_playerDeck.update(getGlobalMousePos());
+
     if (window->input.keyboardMouse.mouse.leftPressed) {
+
+        auto card = m_playerDeck.pullCard();
+
+        if (card != nullptr) {
+            m_activePlayerCards.push_back(card);
+            activateCard(m_player, card->type);
+            if (CARD_TYPES[(int) card->type].endsTurn) {
+                return true;
+            }
+        }
 
         if (!m_actors.isValidPos(mousePos)) {
             return false;
         }
 
         if (m_focusState == FocusState::Accessible) {
+
+            m_pathFinding->setGridAt(m_player->getComponent<Actor>()->position, true);
+
             m_actors.move(m_player, mousePos.cast<int>());
             m_camera.move(m_player->transform.position, 0.25);
+
+            m_pathFinding->setGridAt(m_player->getComponent<Actor>()->position, false);
 
             return true;
         }
@@ -314,21 +347,29 @@ void Runtime::updateEnemies() {
         auto actor = entity->getComponent<Actor>();
         auto targetActor = enemy->target->getComponent<Actor>();
 
-        auto path = m_pathFinding->search(actor->position, targetActor->position);
+        auto path = m_pathFinding->search(actor->position, targetActor->position, 2);
 
         if (!path.has_value()) {
+            std::cout << "No path\n";
             return;
         }
 
-        if (path.value().size() == 1) {
+        std::cout << "Path Size = " << path.value().size() << "\n";
+
+        if (path.value().size() > 0) {
             bool died;
-            attack(entity, m_player, died);
+            std::cout << "ATTACK PLAYER = " << attack(entity, m_player, died) << "\n";
+
             std::cout << "PLAYER DIED :0 \n";
         }
 
-        for (int i = 0; i < std::min(actor->movement, (int) path.value().size() - 2); i++) {
+        m_pathFinding->setGridAt(actor->position, true);
+
+        for (int i = 0; i < std::min(actor->movement, (int) path.value().size() - 1); i++) {
             m_actors.move(entity, path.value()[i + 1]);
         }
+
+        m_pathFinding->setGridAt(actor->position, false);
     });
 }
 
@@ -345,15 +386,20 @@ void Runtime::updatePathfindingGrid() {
     //std::cout << "UPDATED PATH GRID IN " << hg::utils::Clock::ToSeconds(hg::utils::Clock::Now() - start) << "\n";
 }
 
-hg::Vec2i Runtime::getMousePos() {
+
+hg::Vec2 Runtime::getGlobalMousePos() {
     auto rawMousePos = window->input.keyboardMouse.mouse.position;
     rawMousePos[1] = window->size()[1] - rawMousePos[1];
-    return m_actors.getMapPos(m_camera.camera()->getGamePos(rawMousePos));
+    return rawMousePos;
+}
+
+hg::Vec2i Runtime::getMousePos() {
+    return m_actors.getMapPos(m_camera.camera()->getGamePos(getGlobalMousePos()));
 }
 
 bool Runtime::attack(hg::Entity *attacker, hg::Entity *enemy, bool& died) {
     auto attackActor = attacker->getComponent<Actor>();
-    auto enemyActor = attacker->getComponent<Actor>();
+    auto enemyActor = enemy->getComponent<Actor>();
 
     auto dist = distance(attackActor->position, enemyActor->position);
 
@@ -367,85 +413,11 @@ bool Runtime::attack(hg::Entity *attacker, hg::Entity *enemy, bool& died) {
     auto damage = attackActor->calcDamage(diceRoll);
     std::cout << "DAMAGE = " << damage << "\n";
 
-    enemyActor->health -= damage;
+    enemyActor->damage(damage);
 
     died = enemyActor->health <= 0;
 
     return true;
-}
-
-void Runtime::renderMapAndActors() {
-    auto shader = SHADERS.get("sprite");
-    auto font = FONTS.get("default").get();
-    shader->use();
-
-    shader->setMat4("view", m_camera.camera()->view());
-    shader->setMat4("projection", m_camera.camera()->projection());
-
-    entities.forEach<Sprite>([&](auto sprite, auto entity) {
-        sprite->mesh()->update(&sprite->quad);
-        shader->setMat4("model", entity->transform.getModel());
-        auto texture = TEXTURES.get(sprite->texture);
-        texture->bind();
-        glActiveTexture(GL_TEXTURE0);
-        sprite->mesh()->render();
-    });
-
-    shader = SHADERS.get("text");
-    shader->use();
-    shader->setVec4("textColor", Color::red());
-    shader->setMat4("view", m_camera.camera()->view());
-    shader->setMat4("projection", m_camera.camera()->projection());
-
-    entities.forEach<Actor>([&](auto actor, auto entity) {
-        shader->setVec4("color", Color::red());
-        shader->setMat4("model", entity->transform.getModel());
-        m_text->draw(font, actor->name + " (" + std::to_string((int) actor->health) + ")", hg::Vec3(-TILE_SIZE[0] * 0.5, TILE_SIZE[1] * 0.5, 0));
-    });
-}
-
-void Runtime::renderUI(double dt) {
-
-    auto shader = SHADERS.get("focus");
-
-    auto mousePos = getMousePos();
-
-    shader->use();
-    shader->setMat4("view", m_camera.camera()->view());
-    shader->setMat4("projection", m_camera.camera()->projection());
-
-    shader->setMat4("model", hg::Mat4::Identity());
-    shader->setVec4("color", Color::red());
-    m_pathFindingLineMesh->render();
-
-    auto focusQuad = m_focus->getComponent<Quad>();
-    shader->setMat4("model", m_focus->transform.getModel());
-    shader->setVec4("color", FocusColors[(int)m_focusState]);
-    focusQuad->mesh()->render();
-
-    shader = SHADERS.get("text");
-    shader->use();
-    shader->setVec4("textColor", hg::graphics::Color::red());
-    shader->setMat4("model", hg::Mat4::Identity());
-    shader->setMat4("view", m_uiCamera.view());
-    shader->setMat4("projection", m_uiCamera.projection());
-
-    shader = SHADERS.get("sprite");
-    shader->use();
-    shader->setMat4("view", m_uiCamera.view());
-    shader->setMat4("projection", m_uiCamera.projection());
-
-    auto font = FONTS.get("default").get();
-    shader = SHADERS.get("text");
-    shader->use();
-    shader->setMat4("model", hg::Mat4::Identity());
-    shader->setVec4("textColor", Color::red());
-    m_text->draw(font, "FPS: " + std::to_string((int) (1 / dt)));
-    m_text->draw(font, "U: " + std::to_string(updateTime), hg::Vec3(128, 0, 0));
-    m_text->draw(font, "R: " + std::to_string(renderTime), hg::Vec3(400, 0, 0));
-    //m_text->draw(font, "AP: " + std::to_string(m_player->getComponent<Actor>()->actionPoints), hg::Vec3(128, 0, 0));
-    //m_text->draw(font, "HP: " + std::to_string((int) m_player->getComponent<Actor>()->health), hg::Vec3(256, 0, 0));
-    //m_text->draw(font, "Turn: " + std::to_string(m_turn), hg::Vec3(384, 0, 0));
 }
 
 void Runtime::renderSprites() {
@@ -467,10 +439,15 @@ void Runtime::renderSprites() {
     shader->setMat4("view", m_uiCamera.view());
     shader->setMat4("projection", m_uiCamera.projection());
 
-    m_deck.renderSprites(shader);
+    m_playerDeck.renderSprites(shader);
 }
 
 void Runtime::renderFocus() {
+
+    if (!m_actors.isValidPos(getMousePos())) {
+        return;
+    }
+
     auto shader = SHADERS.get("focus");
 
     shader->use();
@@ -497,9 +474,9 @@ void Runtime::renderText(double dt) {
     shader->setMat4("projection", m_camera.camera()->projection());
 
     entities.forEach<Actor>([&](auto actor, auto entity) {
-        shader->setVec4("color", Color::red());
+        shader->setVec4("textColor", entity == m_player ? Color::blue() : Color::red());
         shader->setMat4("model", entity->transform.getModel());
-        m_text->draw(font, actor->name + " (" + std::to_string((int) actor->health) + ")", hg::Vec3(-TILE_SIZE[0] * 0.5, TILE_SIZE[1] * 0.5, 0));
+        m_text->draw(font, "(" + std::to_string((int) actor->health) + ")", hg::Vec3(0, TILE_SIZE[1] * 0.5, 0), TextHAlignment::Center);
     });
 
     shader->setVec4("textColor", hg::graphics::Color::red());
@@ -521,8 +498,58 @@ void Runtime::renderText(double dt) {
         }
     });
 
-    m_deck.renderText(shader);
+    m_playerDeck.renderText(shader);
 }
 
+void Runtime::activateCard(hg::Entity *entity, CardType type) {
+    switch (type) {
+        case CardType::RunAway:
+        {
+            entity->getComponent<Actor>()->movement = RUN_AMOUNT;
+        }
+        break;
+        case CardType::HealthPotion:
+        {
+            entity->getComponent<Actor>()->heal(HEALTH_POTION_AMOUNT);
+        }
+        break;
+        case CardType::FireBlast:
+        {
+            auto actor = entity->getComponent<Actor>();
+            for (int i = -2; i < 2; i++) {
+                for (int j = -2; j < 2; j++) {
+                    if (i != 0 || j != 0) {
+                        auto pos = actor->position + hg::Vec2i(i, j);
+                        auto actors = m_actors.at(pos);
+
+                        for (auto& actor : actors) {
+                            actor->getComponent<Actor>()->damage(FIRE_BLAST_DAMAGE);
+                        }
+                    }
+                }
+            }
+        }
+        break;
+        case CardType::Resurrect:
+        {
+            m_playerDeck.returnRandomCardToHand();
+        }
+        break;
+        default:
+            throw std::runtime_error("Unhandled card type");
+    }
+}
+
+void Runtime::deactivateCard(hg::Entity *entity, CardType type) {
+    switch (type) {
+        case CardType::RunAway:
+            {
+                entity->getComponent<Actor>()->movement = entity->getComponent<Actor>()->baseMovement;
+            }
+            break;
+        default:
+            return;
+    }
+}
 
 #endif

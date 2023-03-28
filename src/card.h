@@ -12,32 +12,49 @@
 #include <hagame/graphics/texture.h>
 
 #include "assets.hpp"
+#include "components/actor.h"
 
 const hg::Vec2 CARD_SIZE = hg::Vec2(128, 190);
 const std::string CARD_TEMPLATE = "card_template";
-const std::string CARD_BACK = "card_template";
+const std::string CARD_BACK = "card_back";
 const std::string CARD_FONT = "card_font";
 const int CARD_NAME_SIZE = 20;
 const int CARD_DESC_SIZE = 14;
+
+const float HEALTH_POTION_AMOUNT = 50.0f;
+const int RUN_AMOUNT = 5;
+
+const float FIRE_BLAST_DAMAGE = 50.0f;
 
 struct CardDefinition {
     std::string name;
     std::string description;
     std::string cardTexture;
+    bool endsTurn;
+    int turns;
+    // card_f onUse = [](const auto& scene, const auto& entity) {};
+    // card_f afterUse = [](const auto& scene, const auto& entity) {};
 };
 
 enum class CardType {
     HealthPotion,
+    RunAway,
+    FireBlast,
+    Resurrect,
 };
 
 const std::vector<CardDefinition> CARD_TYPES = {
-        CardDefinition{"Health Potion", "Increase health by 50%", "card_template"},
+        CardDefinition{"Health Potion", "Restore some health.", "card_health", true, 1},
+        CardDefinition{"Run Away", "Run up to " + std::to_string(RUN_AMOUNT) + " tiles for 2 turns." , "card_move", false, 2},
+        CardDefinition{"Fire Blast", "Deal fire damage to all enemies in 2 tile radius.", "card_fire", true, 1},
+        CardDefinition{"Resurrect", "Bring a random card back from the grave.", "card_cross", true, 1},
 };
 
 class Card : public hg::Component {
 public:
 
     CardType type;
+    int turns = 0;
 
     Card():
         m_quad(CARD_SIZE),

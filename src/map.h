@@ -12,7 +12,7 @@
 #include "components/tileObject.h"
 
 const hg::Vec2 TILE_SIZE = hg::Vec2(64, 64);
-const static int TILE_COUNT = 100;
+const static int TILE_COUNT = 15;
 
 template <IsTileObject TileType>
 class Map {

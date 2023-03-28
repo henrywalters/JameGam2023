@@ -47,7 +47,7 @@ public:
         return m_grid[pos.y()][pos.x()];
     }
 
-    std::optional<std::vector<hg::Vec2i>> search(hg::Vec2i startPos, hg::Vec2i goalPos) {
+    std::optional<std::vector<hg::Vec2i>> search(hg::Vec2i startPos, hg::Vec2i goalPos, float maxDistance = 0.0f) {
 
         m_openList.clear();
         m_closedList.clear();
@@ -62,7 +62,7 @@ public:
         while (m_openList.size() > 0) {
             auto current = m_openList[0];
 
-            if (current->position == goalPos) {
+            if (current->position == goalPos || distanceMetric(current->position, goalPos) < maxDistance) {
                 return constructPath(current.get());
             }
 

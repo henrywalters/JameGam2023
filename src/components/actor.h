@@ -14,14 +14,29 @@ public:
 
     int maxActionPoints = 1;
     int actionPoints = 1;
+    int baseMovement = 1;
     int movement = 1;
     int attackRange = 1;
+    float maxHealth = 100.0f;
     float health = 100.0f;
-    float strength = 10;
+    float strength = 1;
 
     float calcDamage(float baseDamage) {
-        std::cout << std::log(strength) << "\n";
-        return baseDamage * std::log(strength);
+        return baseDamage * strength;
+    }
+
+    void damage(float amount) {
+        health -= amount;
+        if (health <= 0) {
+            health = 0;
+        }
+    }
+
+    void heal(float amount) {
+        health += amount;
+        if (health > maxHealth) {
+            health = maxHealth;
+        }
     }
 };
 

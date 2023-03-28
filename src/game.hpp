@@ -44,7 +44,7 @@ void Game::onInit() {
 
     });
 
-    loadFont("default", "fonts/8bit.ttf");
+    loadFont("default", "fonts/8bit.ttf")->fontSize(16);
     loadFont("card_font", "fonts/apple_kid.ttf");
 
     loadShader("sprite", "shaders/sprite.vert", "shaders/sprite.frag");
@@ -60,6 +60,12 @@ void Game::onInit() {
     loadTexture("water", "textures/tiles/dngn_shoals_deep_water1.png");
 
     loadTexture("card_template", "textures/misc/card_template.png");
+    loadTexture("card_back", "textures/misc/card_back.png");
+    loadTexture("card_cross", "textures/misc/card_cross.png");
+    loadTexture("card_fire", "textures/misc/card_fire.png");
+    loadTexture("card_health", "textures/misc/card_health.png");
+    loadTexture("card_move", "textures/misc/card_move.png");
+    loadTexture("card_shield", "textures/misc/card_shield.png");
 
     auto runtime = static_cast<Runtime*>(scenes()->add<Runtime>("runtime"));
     runtime->window = m_window;
