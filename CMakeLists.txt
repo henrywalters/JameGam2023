@@ -23,7 +23,7 @@ set(CMAKE_CXX_STANDARD 20)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 find_package(HaGame2 REQUIRED)
 
-add_executable(JameGam main.cpp src/game.hpp src/assets.hpp src/scenes/runtime.hpp src/utils/dice.h src/map.h)
+add_executable(JameGam main.cpp src/game.hpp src/assets.hpp src/scenes/runtime.hpp src/utils/dice.h src/map.h src/deck.h)
 
 # add_library(JameGam SHARED library.cpp components/target.h scripts/JameGam.cpp)
 
@@ -34,7 +34,7 @@ target_link_libraries(JameGam ${HAGAME2_LIBRARY})
 target_link_libraries(JameGam ${GLFW_LIBRARIES})
 target_link_libraries(JameGam ${OPENGL_LIBRARIES})
 target_link_libraries(JameGam ${X11_LIBRARIES})
-target_link_libraries(JameGam ${BOX2D_LIBRARY})
+# target_link_libraries(JameGam ${BOX2D_LIBRARY})
 
 # set(CMAKE_TOOLCHAIN_FILE /home/henry/emsdk/)
 if(EMSCRIPTEN)

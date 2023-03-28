@@ -4,14 +4,18 @@
 #include <hagame/core/scene.h>
 #include <hagame/graphics/text.h>
 #include <hagame/graphics/camera.h>
+#include <hagame/graphics/components/textRenderer.h>
 #include <hagame/graphics/components/sprite.h>
 #include <hagame/graphics/primitives/quad.h>
+#include <hagame/graphics/primitives/line.h>
 
 #include "../assets.hpp"
 #include "../cameraController.h"
 #include "../map.h"
 #include "../utils/pathfinding.h"
+#include "../utils/dice.h"
 
+#include "../deck.h"
 #include "../components/actor.h"
 #include "../components/obstacle.h"
 #include "../components/meleeEnemy.h"
@@ -28,6 +32,11 @@ enum class FocusState {
 
 const int FOCUS_ALPHA = 100;
 
+inline int distance(hg::Vec2i a, hg::Vec2i b) {
+    auto delta = b - a;
+    return std::max(std::abs(delta.x()), std::abs(delta.y()));
+}
+
 const std::vector<Color> FocusColors = {
         Color(255, 255, 0, FOCUS_ALPHA),
         Color(255, 0, 0, FOCUS_ALPHA),
@@ -40,6 +49,7 @@ class Runtime : public hg::Scene {
 public:
 
     Runtime():
+        m_deck(this),
         m_actors(this),
         m_obstacles(this),
         m_props(this)
@@ -56,6 +66,10 @@ protected:
 
 private:
 
+    Deck m_deck;
+
+    Dice<6> m_dice;
+
     Resolution m_resolution = HD;
 
     CameraController m_camera;
@@ -64,6 +78,10 @@ private:
     Map<Actor> m_actors;
     Map<TileObject> m_props;
     Map<Obstacle> m_obstacles;
+
+    std::unique_ptr<PathFinding> m_pathFinding;
+    primitives::Line m_pathFindingLine;
+    std::unique_ptr<MeshInstance> m_pathFindingLineMesh;
 
     std::unique_ptr<Text> m_text;
 
@@ -75,15 +93,33 @@ private:
     hg::Entity* m_focus;
 
     void updateFocusState(hg::Vec2i mousePos);
-    std::optional<std::vector<hg::Vec2i>> getPath(hg::Vec2i start, hg::Vec2i goal);
-
+    void updatePathfindingGrid();
+    bool updatePlayer();
     void updateEnemies();
+
+    void renderMapAndActors();
+    void renderUI(double dt);
+
+    void renderSprites();
+    void renderText(double dt);
+    void renderFocus();
+
+    bool attack(hg::Entity* attacker, hg::Entity* enemy, bool& died);
+
+    hg::Vec2i getMousePos();
+
+    double updateTime = 0;
+    double renderTime = 0;
 };
 
 void Runtime::onInit() {
 
+    Card::InitializeFonts();
+
     m_uiCamera.size = m_resolution;
     m_camera.setResolution(m_resolution);
+
+    m_deck.pos = (CARD_SIZE * 0.6).resize<3>();
 
     Windows::Events.subscribe(WindowEvents::Resize, [&](auto window) {
     });
@@ -97,6 +133,8 @@ void Runtime::onInit() {
     m_player = m_actors.add("balrug", hg::Vec2i(7, 2));
     m_player->getComponent<Actor>()->movement = 2;
 
+    m_camera.move(m_player->transform.position, 1);
+
     auto dwarf = m_actors.add("dwarf", hg::Vec2i(7, 7));
     dwarf->addComponent<MeleeEnemy>()->target = m_player;
 
@@ -107,15 +145,32 @@ void Runtime::onInit() {
         m_obstacles.add("wall", hg::Vec2i(10, i));
     }
 
+    m_obstacles.add("water", hg::Vec2i(4, 4));
+    m_obstacles.add("water", hg::Vec2i(4, 5));
+    m_obstacles.add("water", hg::Vec2i(5, 4));
+    m_obstacles.add("water", hg::Vec2i(5, 5));
+
+    /*
     for (int i = 1; i < 10; i++) {
         for (int j = 1; j < 10; j++) {
             m_props.add("floor", hg::Vec2i(i, j));
         }
     }
+    */
 
     m_focus = entities.add();
     m_focus->transform.position[2] = 1;
     m_focus->addComponent<Quad>(TILE_SIZE, TILE_SIZE * 0.5);
+
+
+    m_pathFinding = std::make_unique<PathFinding>(hg::Vec2i(TILE_COUNT, TILE_COUNT));
+    m_pathFindingLine.thickness(3);
+    m_pathFindingLineMesh = std::make_unique<MeshInstance>(&m_pathFindingLine);
+
+    for (int i = 0; i < 4; i++) {
+        m_deck.add(CardType::HealthPotion);
+    }
+
 
 }
 
@@ -129,67 +184,49 @@ void Runtime::onDeactivate() {
 
 void Runtime::onUpdate(double dt) {
 
-    auto rawMousePos = window->input.keyboardMouse.mouse.position;
-    rawMousePos[1] = window->size()[1] - rawMousePos[1];
-    auto mousePos = m_actors.getMapPos(m_camera.camera()->getGamePos(rawMousePos));
+    auto mousePos = getMousePos();
+    auto font = FONTS.get("default").get();
 
-    updateFocusState(mousePos.cast<int>());
+    auto now = hg::utils::Clock::Now();
+
+    updatePathfindingGrid();
+
+    updateFocusState(mousePos);
     m_focus->transform.position = m_actors.getWorldPos(mousePos);
     m_focus->transform.position[2] = 1.0f;
 
     m_camera.update(dt);
 
-    if (window->input.keyboardMouse.mouse.leftPressed) {
-        if (m_actors.isValidPos(mousePos) && m_focusState == FocusState::Accessible) {
-            m_actors.move(m_player, mousePos.cast<int>());
-            m_camera.move(m_player->transform.position, 0.25);
-
-            updateEnemies();
-        }
+    if (updatePlayer()) {
+        updateEnemies();
+        m_turn++;
     }
 
-    auto shader = SHADERS.get("sprite");
-    shader->use();
+    updateTime = hg::utils::Clock::ToSeconds(hg::utils::Clock::Now() - now);
 
-    shader->setMat4("view", m_camera.camera()->view());
-    shader->setMat4("projection", m_camera.camera()->projection());
+    now = hg::utils::Clock::Now();
 
-    entities.forEach<Sprite>([&](auto sprite, auto entity) {
-        sprite->mesh()->update(&sprite->quad);
-        shader->setMat4("model", entity->transform.getModel());
-        auto texture = TEXTURES.get(sprite->texture);
-        texture->bind();
-        glActiveTexture(GL_TEXTURE0);
-        sprite->mesh()->render();
-    });
+    renderSprites();
+    renderFocus();
+    renderText(dt);
 
-    shader = SHADERS.get("focus");
-    shader->use();
-    shader->setMat4("view", m_camera.camera()->view());
-    shader->setMat4("projection", m_camera.camera()->projection());
+    //renderMapAndActors();
+    //renderUI(dt);
 
-    auto focusQuad = m_focus->getComponent<Quad>();
-    shader->setMat4("model", m_focus->transform.getModel());
-    shader->setVec4("color", FocusColors[(int)m_focusState]);
-    focusQuad->mesh()->render();
-
-    shader = SHADERS.get("sprite");
-    shader->use();
-    shader->setMat4("model", hg::Mat4::Identity());
-    shader->setMat4("view", m_uiCamera.view());
-    shader->setMat4("projection", m_uiCamera.projection());
-
-    auto font = FONTS.get("default").get();
-
-    m_text->draw(font, mousePos);
-    m_text->draw(font, "AP: " + std::to_string(m_player->getComponent<Actor>()->actionPoints), hg::Vec3(128, 0, 0));
-    m_text->draw(font, "HP: " + std::to_string((int) m_player->getComponent<Actor>()->health), hg::Vec3(256, 0, 0));
-    m_text->draw(font, "Turn: " + std::to_string(m_turn), hg::Vec3(384, 0, 0));
+    renderTime = hg::utils::Clock::ToSeconds(hg::utils::Clock::Now() - now);
 }
 
 void Runtime::updateFocusState(hg::Vec2i mousePos) {
+    m_pathFindingLine.clearPoints();
+    m_pathFindingLineMesh->update(&m_pathFindingLine);
+
     auto actor = m_player->getComponent<Actor>();
     auto delta = mousePos - actor->position;
+
+    if (!m_actors.isValidPos(mousePos)) {
+        m_focusState = FocusState::Inaccessible;
+        return;
+    }
 
     m_focusState = FocusState::Accessible;
 
@@ -217,65 +254,56 @@ void Runtime::updateFocusState(hg::Vec2i mousePos) {
         return;
     }
 
-    auto path = getPath(m_player->getComponent<Actor>()->position, mousePos);
+    auto path = m_pathFinding->search(m_player->getComponent<Actor>()->position, mousePos);
 
-    if (!path.has_value()) {
+    if (!path.has_value() || path.value().size() - 1 > actor->movement) {
         m_focusState = FocusState::Inaccessible;
+        return;
     }
+
+    for (auto& pt : path.value()) {
+        m_pathFindingLine.addPoint(m_actors.getWorldPos(pt) + TILE_SIZE.resize<3>() * 0.5);
+    }
+
+    m_pathFindingLineMesh->update(&m_pathFindingLine);
 }
 
-std::optional<std::vector<hg::Vec2i>> Runtime::getPath(hg::Vec2i start, hg::Vec2i goal) {
 
-    std::vector<hg::Vec2i> path;
+bool Runtime::updatePlayer() {
 
-    auto delta = goal - start;
-    int dist = std::max(delta.x(), delta.y());
-    hg::Vec2i dir = hg::Vec2i(hg::sign(delta.x()), hg::sign(delta.y()));
+    auto mousePos = getMousePos();
 
-    if (delta == hg::Vec2i::Zero()) {
-        return std::nullopt;
-    }
+    if (window->input.keyboardMouse.mouse.leftPressed) {
 
-    // It's just a straight line so directly check all the nodes
-    if (delta.x() == 0 || delta.y() == 0) {
-        for (int i = 1; i < dist; i++) {
-            auto pos = start + dir * i;
-            path.push_back(pos);
-            if (m_actors.at(pos).size() > 0 || m_obstacles.at(pos).size() > 0) {
-                return std::nullopt;
+        if (!m_actors.isValidPos(mousePos)) {
+            return false;
+        }
+
+        if (m_focusState == FocusState::Accessible) {
+            m_actors.move(m_player, mousePos.cast<int>());
+            m_camera.move(m_player->transform.position, 0.25);
+
+            return true;
+        }
+
+        if (m_focusState == FocusState::Enemy) {
+            hg::Entity* enemy = m_actors.at(mousePos)[0];
+            bool died;
+            if (!attack(m_player, enemy, died)) {
+                return false;
             }
+
+            if (died) {
+                m_actors.destroy(enemy);
+            }
+
+            return true;
         }
-        return path;
     }
 
-    // It's a more complex path
-
-    PathFindingGrid grid;
-
-    for (int i = 0; i <= std::abs(delta.x()); i++) {
-        std::vector<bool> row;
-        for (int j = 0; j <= std::abs(delta.y()); j++) {
-            auto pos = start + hg::Vec2i(i, j).prod(dir);
-            row.push_back(!(m_actors.at(pos).size() > 0 || m_obstacles.at(pos).size() > 0));
-        }
-        grid.push_back(row);
-    }
-
-    PathFinding pathFinding(grid);
-
-    auto rawPath = pathFinding.search(hg::Vec2i::Zero(), hg::Vec2i(std::abs(delta.x()), std::abs(delta.y())));
-
-    if (!rawPath.has_value()) {
-        return std::nullopt;
-    }
-
-    for (auto& pos : rawPath.value()) {
-        pos = start + pos.prod(dir);
-        path.push_back(pos);
-    }
-
-    return path;
+    return false;
 }
+
 
 void Runtime::updateEnemies() {
     entities.forEach<MeleeEnemy>([&](MeleeEnemy* enemy, hg::Entity* entity) {
@@ -286,17 +314,214 @@ void Runtime::updateEnemies() {
         auto actor = entity->getComponent<Actor>();
         auto targetActor = enemy->target->getComponent<Actor>();
 
-        auto path = getPath(actor->position, targetActor->position);
+        auto path = m_pathFinding->search(actor->position, targetActor->position);
 
         if (!path.has_value()) {
             return;
         }
 
-        for (int i = 0; i < std::min(actor->movement, (int) path.value().size()); i++) {
-            std::cout << "MOVE TO " << path.value()[i] << "\n";
-            m_actors.move(entity, path.value()[i]);
+        if (path.value().size() == 1) {
+            bool died;
+            attack(entity, m_player, died);
+            std::cout << "PLAYER DIED :0 \n";
+        }
+
+        for (int i = 0; i < std::min(actor->movement, (int) path.value().size() - 2); i++) {
+            m_actors.move(entity, path.value()[i + 1]);
         }
     });
+}
+
+void Runtime::updatePathfindingGrid() {
+    auto start = hg::utils::Clock::Now();
+
+    // TODO: optimize this somehow.
+    for (int i = 0; i < TILE_COUNT; i++) {
+        for (int j = 0; j < TILE_COUNT; j++) {
+            auto pos = hg::Vec2i(j, i);
+            m_pathFinding->setGridAt(pos, !(m_actors.at(pos).size() > 0 || m_obstacles.at(pos).size() > 0));
+        }
+    }
+    //std::cout << "UPDATED PATH GRID IN " << hg::utils::Clock::ToSeconds(hg::utils::Clock::Now() - start) << "\n";
+}
+
+hg::Vec2i Runtime::getMousePos() {
+    auto rawMousePos = window->input.keyboardMouse.mouse.position;
+    rawMousePos[1] = window->size()[1] - rawMousePos[1];
+    return m_actors.getMapPos(m_camera.camera()->getGamePos(rawMousePos));
+}
+
+bool Runtime::attack(hg::Entity *attacker, hg::Entity *enemy, bool& died) {
+    auto attackActor = attacker->getComponent<Actor>();
+    auto enemyActor = attacker->getComponent<Actor>();
+
+    auto dist = distance(attackActor->position, enemyActor->position);
+
+    if (dist > attackActor->attackRange) {
+        return false;
+    }
+
+    auto diceRoll = m_dice.roll();
+    std::cout << "DICE ROLL = " << diceRoll << "\n";
+
+    auto damage = attackActor->calcDamage(diceRoll);
+    std::cout << "DAMAGE = " << damage << "\n";
+
+    enemyActor->health -= damage;
+
+    died = enemyActor->health <= 0;
+
+    return true;
+}
+
+void Runtime::renderMapAndActors() {
+    auto shader = SHADERS.get("sprite");
+    auto font = FONTS.get("default").get();
+    shader->use();
+
+    shader->setMat4("view", m_camera.camera()->view());
+    shader->setMat4("projection", m_camera.camera()->projection());
+
+    entities.forEach<Sprite>([&](auto sprite, auto entity) {
+        sprite->mesh()->update(&sprite->quad);
+        shader->setMat4("model", entity->transform.getModel());
+        auto texture = TEXTURES.get(sprite->texture);
+        texture->bind();
+        glActiveTexture(GL_TEXTURE0);
+        sprite->mesh()->render();
+    });
+
+    shader = SHADERS.get("text");
+    shader->use();
+    shader->setVec4("textColor", Color::red());
+    shader->setMat4("view", m_camera.camera()->view());
+    shader->setMat4("projection", m_camera.camera()->projection());
+
+    entities.forEach<Actor>([&](auto actor, auto entity) {
+        shader->setVec4("color", Color::red());
+        shader->setMat4("model", entity->transform.getModel());
+        m_text->draw(font, actor->name + " (" + std::to_string((int) actor->health) + ")", hg::Vec3(-TILE_SIZE[0] * 0.5, TILE_SIZE[1] * 0.5, 0));
+    });
+}
+
+void Runtime::renderUI(double dt) {
+
+    auto shader = SHADERS.get("focus");
+
+    auto mousePos = getMousePos();
+
+    shader->use();
+    shader->setMat4("view", m_camera.camera()->view());
+    shader->setMat4("projection", m_camera.camera()->projection());
+
+    shader->setMat4("model", hg::Mat4::Identity());
+    shader->setVec4("color", Color::red());
+    m_pathFindingLineMesh->render();
+
+    auto focusQuad = m_focus->getComponent<Quad>();
+    shader->setMat4("model", m_focus->transform.getModel());
+    shader->setVec4("color", FocusColors[(int)m_focusState]);
+    focusQuad->mesh()->render();
+
+    shader = SHADERS.get("text");
+    shader->use();
+    shader->setVec4("textColor", hg::graphics::Color::red());
+    shader->setMat4("model", hg::Mat4::Identity());
+    shader->setMat4("view", m_uiCamera.view());
+    shader->setMat4("projection", m_uiCamera.projection());
+
+    shader = SHADERS.get("sprite");
+    shader->use();
+    shader->setMat4("view", m_uiCamera.view());
+    shader->setMat4("projection", m_uiCamera.projection());
+
+    auto font = FONTS.get("default").get();
+    shader = SHADERS.get("text");
+    shader->use();
+    shader->setMat4("model", hg::Mat4::Identity());
+    shader->setVec4("textColor", Color::red());
+    m_text->draw(font, "FPS: " + std::to_string((int) (1 / dt)));
+    m_text->draw(font, "U: " + std::to_string(updateTime), hg::Vec3(128, 0, 0));
+    m_text->draw(font, "R: " + std::to_string(renderTime), hg::Vec3(400, 0, 0));
+    //m_text->draw(font, "AP: " + std::to_string(m_player->getComponent<Actor>()->actionPoints), hg::Vec3(128, 0, 0));
+    //m_text->draw(font, "HP: " + std::to_string((int) m_player->getComponent<Actor>()->health), hg::Vec3(256, 0, 0));
+    //m_text->draw(font, "Turn: " + std::to_string(m_turn), hg::Vec3(384, 0, 0));
+}
+
+void Runtime::renderSprites() {
+    auto shader = SHADERS.get("sprite").get();
+    shader->use();
+
+    shader->setMat4("view", m_camera.camera()->view());
+    shader->setMat4("projection", m_camera.camera()->projection());
+
+    entities.forEach<Sprite>([&](auto sprite, auto entity) {
+        sprite->mesh()->update(&sprite->quad);
+        shader->setMat4("model", entity->transform.getModel());
+        auto texture = TEXTURES.get(sprite->texture);
+        texture->bind();
+        glActiveTexture(GL_TEXTURE0);
+        sprite->mesh()->render();
+    });
+
+    shader->setMat4("view", m_uiCamera.view());
+    shader->setMat4("projection", m_uiCamera.projection());
+
+    m_deck.renderSprites(shader);
+}
+
+void Runtime::renderFocus() {
+    auto shader = SHADERS.get("focus");
+
+    shader->use();
+    shader->setMat4("view", m_camera.camera()->view());
+    shader->setMat4("projection", m_camera.camera()->projection());
+
+    shader->setMat4("model", hg::Mat4::Identity());
+    shader->setVec4("color", Color::red());
+    m_pathFindingLineMesh->render();
+
+    auto focusQuad = m_focus->getComponent<Quad>();
+    shader->setMat4("model", m_focus->transform.getModel());
+    shader->setVec4("color", FocusColors[(int)m_focusState]);
+    focusQuad->mesh()->render();
+}
+
+void Runtime::renderText(double dt) {
+    auto font = FONTS.get("default").get();
+    auto shader = SHADERS.get("text").get();
+    shader->use();
+
+    shader->setVec4("textColor", Color::red());
+    shader->setMat4("view", m_camera.camera()->view());
+    shader->setMat4("projection", m_camera.camera()->projection());
+
+    entities.forEach<Actor>([&](auto actor, auto entity) {
+        shader->setVec4("color", Color::red());
+        shader->setMat4("model", entity->transform.getModel());
+        m_text->draw(font, actor->name + " (" + std::to_string((int) actor->health) + ")", hg::Vec3(-TILE_SIZE[0] * 0.5, TILE_SIZE[1] * 0.5, 0));
+    });
+
+    shader->setVec4("textColor", hg::graphics::Color::red());
+    shader->setMat4("model", hg::Mat4::Identity());
+    shader->setMat4("view", m_uiCamera.view());
+    shader->setMat4("projection", m_uiCamera.projection());
+
+    m_text->draw(font, "FPS: " + std::to_string((int) (1 / dt)));
+    m_text->draw(font, "U: " + std::to_string(updateTime), hg::Vec3(128, 0, 0));
+    m_text->draw(font, "R: " + std::to_string(renderTime), hg::Vec3(400, 0, 0));
+
+    entities.forEach<TextRenderer>([&](auto text, auto entity) {
+        shader->setVec4("textColor", text->color);
+        auto font = FONTS.get(text->font).get();
+        if (text->fixedWidth) {
+            m_text->draw(font, text->message, text->size, text->pos, text->hAlignment, text->vAlignment);
+        } else {
+            m_text->draw(font, text->message, text->pos, text->hAlignment, text->vAlignment);
+        }
+    });
+
+    m_deck.renderText(shader);
 }
 
 

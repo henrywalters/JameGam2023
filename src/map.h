@@ -12,6 +12,7 @@
 #include "components/tileObject.h"
 
 const hg::Vec2 TILE_SIZE = hg::Vec2(64, 64);
+const static int TILE_COUNT = 100;
 
 template <IsTileObject TileType>
 class Map {
@@ -42,8 +43,6 @@ public:
     hg::Vec3 getWorldPos(hg::Vec2i mapPos) const;
     hg::Vec2i getMapPos(hg::Vec2 worldPos) const;
 private:
-
-    const static int TILE_COUNT = 1000;
 
     using map_t = std::array<std::array<std::vector<hg::Entity*>, TILE_COUNT>, TILE_COUNT>;
 

@@ -10,14 +10,19 @@
 class Actor : public TileObject {
 public:
 
+    std::string name = "";
+
     int maxActionPoints = 1;
     int actionPoints = 1;
     int movement = 1;
-    float health = 10;
-    float defense = 1;
-    float strength = 1;
-    float luck = 1;
+    int attackRange = 1;
+    float health = 100.0f;
+    float strength = 10;
 
+    float calcDamage(float baseDamage) {
+        std::cout << std::log(strength) << "\n";
+        return baseDamage * std::log(strength);
+    }
 };
 
 #endif //JAMEGAM_ACTOR_H

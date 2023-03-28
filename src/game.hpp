@@ -45,9 +45,11 @@ void Game::onInit() {
     });
 
     loadFont("default", "fonts/8bit.ttf");
+    loadFont("card_font", "fonts/apple_kid.ttf");
 
     loadShader("sprite", "shaders/sprite.vert", "shaders/sprite.frag");
     loadShader("focus", "shaders/focus.vert", "shaders/focus.frag");
+    loadShader("text", "shaders/text.vert", "shaders/text.frag");
 
     loadTexture("balrug", "textures/actors/balrug.png");
     loadTexture("elf", "textures/actors/elf.png");
@@ -55,6 +57,9 @@ void Game::onInit() {
     loadTexture("floor", "textures/tiles/cobble_blood1.png");
     loadTexture("wall", "textures/tiles/wall_vines4.png");
     loadTexture("focus", "textures/misc/focus.png");
+    loadTexture("water", "textures/tiles/dngn_shoals_deep_water1.png");
+
+    loadTexture("card_template", "textures/misc/card_template.png");
 
     auto runtime = static_cast<Runtime*>(scenes()->add<Runtime>("runtime"));
     runtime->window = m_window;

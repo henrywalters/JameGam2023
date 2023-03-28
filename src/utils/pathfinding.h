@@ -8,8 +8,7 @@
 #include <hagame/math/aliases.h>
 
 float distanceMetric(hg::Vec2i a, hg::Vec2i b) {
-    auto delta = b - a;
-    return std::max(std::abs(delta.x()), std::abs(delta.y()));
+    return (b.cast<float>() - a.cast<float>()).magnitude();
 }
 
 struct PathFindingNode {
@@ -25,9 +24,28 @@ using PathFindingGrid = std::vector<std::vector<IsAccessible>>;
 class PathFinding {
 public:
 
-    PathFinding(PathFindingGrid grid):
-        m_grid(grid)
-    {}
+    PathFinding(hg::Vec2i gridSize) {
+        resetGrid(gridSize);
+    }
+
+    void resetGrid(hg::Vec2i gridSize) {
+        m_grid.clear();
+        for (int y = 0; y < gridSize.y(); y++) {
+            std::vector<IsAccessible> row;
+            for (int x = 0; x < gridSize.x(); x++) {
+                row.push_back(true);
+            }
+            m_grid.push_back(row);
+        }
+    }
+
+    void setGridAt(hg::Vec2i pos, IsAccessible accessible) {
+        m_grid[pos.y()][pos.x()] = accessible;
+    }
+
+    IsAccessible getGridAt(hg::Vec2i pos) {
+        return m_grid[pos.y()][pos.x()];
+    }
 
     std::optional<std::vector<hg::Vec2i>> search(hg::Vec2i startPos, hg::Vec2i goalPos) {
 
@@ -77,9 +95,10 @@ public:
 
 private:
 
+    PathFindingGrid m_grid;
+
     std::vector<std::shared_ptr<PathFindingNode>> m_openList;
     std::vector<std::shared_ptr<PathFindingNode>> m_closedList;
-    PathFindingGrid m_grid;
 
     PathFindingNode* getOpenNeighbor(PathFindingNode* node) {
         int index = -1;
@@ -136,6 +155,7 @@ private:
             node = node->parent;
             path.push_back(node->position);
         }
+        std::reverse(path.begin(), path.end());
         return path;
     }
 
@@ -154,7 +174,7 @@ private:
                     continue;
                 }
 
-                if (m_grid[pos.x()][pos.y()]) {
+                if (getGridAt(pos)) {
                     auto neighbor = std::make_shared<PathFindingNode>();
                     neighbor->parent = node;
                     neighbor->position = pos;
