@@ -5,6 +5,7 @@
 #ifndef JAMEGAM_DECK_H
 #define JAMEGAM_DECK_H
 
+#include <hagame/math/functions.h>
 #include <hagame/core/scene.h>
 #include <hagame/graphics/components/sprite.h>
 #include <hagame/graphics/components/textRenderer.h>
@@ -28,11 +29,33 @@ public:
     void discard(Card* card);
     void returnToHand(Card* card);
     void returnRandomCardToHand();
+    void clear();
 
     void renderSprites(hg::graphics::ShaderProgram* shader);
     void renderText(hg::graphics::ShaderProgram* shader);
 
+    std::vector<CardType> hand() {
+        std::vector<CardType> out;
+        for (const auto& card : m_hand) {
+            out.push_back(card->type);
+        }
+        return out;
+    }
+
+    std::vector<CardType> discard() {
+        std::vector<CardType> out;
+        for (const auto& card : m_discard) {
+            out.push_back(card->type);
+        }
+        return out;
+    }
+
 private:
+
+    const hg::Vec3 DISCARD_SPACE = hg::Vec3(3, 3, 0);
+    const float PADDING = 10.0f;
+    const float HOVER_RAISE = 30.0f;
+
     hg::Scene* m_scene;
 
     std::vector<std::unique_ptr<Card>> m_cards;
@@ -54,18 +77,18 @@ void Deck::update(hg::Vec2 mousePos) {
     hg::Vec3 cardPos = pos;
 
     for (int i = 0; i < m_discard.size(); i++) {
-        cardPos[0] += 5;
+        cardPos += DISCARD_SPACE;
     }
 
     if (m_discard.size() > 0) {
-        cardPos[0] += CARD_SIZE[0] + 20;
+        cardPos[0] += CARD_SIZE[0] + PADDING;
     }
 
     for (int i = 0; i < m_hand.size(); i++) {
         if (hg::rectContainsPoint(cardPos.resize<2>() - CARD_SIZE * 0.5, CARD_SIZE, mousePos)) {
             m_hovered = i;
         }
-        cardPos[0] += CARD_SIZE[0] + 10;
+        cardPos[0] += CARD_SIZE[0] + PADDING;
     }
 }
 
@@ -84,11 +107,11 @@ void Deck::renderSprites(hg::graphics::ShaderProgram *shader) {
     for (int i = 0; i < m_discard.size(); i++) {
         shader->setMat4("model", hg::Mat4::Translation(cardPos));
         m_discard[i]->renderBack();
-        cardPos[0] += 5;
+        cardPos += DISCARD_SPACE;
     }
 
     if (m_discard.size() > 0) {
-        cardPos[0] += CARD_SIZE[0] + 20;
+        cardPos[0] += CARD_SIZE[0] + PADDING;
     }
 
     for (int i = 0; i < m_hand.size(); i++) {
@@ -96,12 +119,12 @@ void Deck::renderSprites(hg::graphics::ShaderProgram *shader) {
         auto spritePos = cardPos;
 
         if (m_hovered == i) {
-            spritePos[1] += 50;
+            spritePos[1] += HOVER_RAISE;
         }
 
         shader->setMat4("model", hg::Mat4::Translation(spritePos));
         m_hand[i]->renderSprite();
-        cardPos[0] += CARD_SIZE[0] + 10;
+        cardPos[0] += CARD_SIZE[0] + PADDING;
     }
 }
 
@@ -112,23 +135,23 @@ void Deck::renderText(hg::graphics::ShaderProgram *shader) {
     hg::Vec3 cardPos = pos;
 
     for (int i = 0; i < m_discard.size(); i++) {
-        cardPos[0] += 5;
+        cardPos += DISCARD_SPACE;
     }
 
     if (m_discard.size() > 0) {
-        cardPos[0] += CARD_SIZE[0] + 20;
+        cardPos[0] += CARD_SIZE[0] + PADDING;
     }
 
     for (int i = 0; i < m_hand.size(); i++) {
         auto textPos = cardPos;
 
         if (m_hovered == i) {
-            textPos[1] += 50;
+            textPos[1] += HOVER_RAISE;
         }
 
         shader->setMat4("model", hg::Mat4::Translation(textPos));
         m_hand[i]->renderText();
-        cardPos[0] += CARD_SIZE[0] + 10;
+        cardPos[0] += CARD_SIZE[0] + PADDING;
     }
 
 }
@@ -171,6 +194,12 @@ void Deck::returnRandomCardToHand() {
     hg::utils::Random rand;
 
     returnToHand(m_discard[rand.integer<int>(0, m_discard.size())]);
+}
+
+void Deck::clear() {
+    m_cards.clear();
+    m_discard.clear();
+    m_hand.clear();
 }
 
 

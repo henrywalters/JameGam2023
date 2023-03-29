@@ -11,6 +11,9 @@
 #include "assets.hpp"
 
 #include "scenes/runtime.hpp"
+#include "scenes/title.h"
+#include "scenes/death.h"
+#include "scenes/win.h"
 
 using namespace hg::graphics;
 
@@ -44,7 +47,8 @@ void Game::onInit() {
 
     });
 
-    loadFont("default", "fonts/8bit.ttf")->fontSize(16);
+    loadFont("default", "fonts/8bit.ttf")->fontSize(14);
+    loadFont("default_large", "fonts/apple_kid.ttf")->fontSize(64);
     loadFont("card_font", "fonts/apple_kid.ttf");
 
     loadShader("sprite", "shaders/sprite.vert", "shaders/sprite.frag");
@@ -54,10 +58,14 @@ void Game::onInit() {
     loadTexture("balrug", "textures/actors/balrug.png");
     loadTexture("elf", "textures/actors/elf.png");
     loadTexture("dwarf", "textures/actors/dwarf.png");
+    loadTexture("angel", "textures/actors/angel.png");
+    loadTexture("centaur", "textures/actors/centaur.png");
     loadTexture("floor", "textures/tiles/cobble_blood1.png");
     loadTexture("wall", "textures/tiles/wall_vines4.png");
     loadTexture("focus", "textures/misc/focus.png");
     loadTexture("water", "textures/tiles/dngn_shoals_deep_water1.png");
+    loadTexture("stairs_up", "textures/misc/stone_stairs_up.png");
+    loadTexture("stairs_down", "textures/misc/stone_stairs_down.png");
 
     loadTexture("card_template", "textures/misc/card_template.png");
     loadTexture("card_back", "textures/misc/card_back.png");
@@ -70,7 +78,16 @@ void Game::onInit() {
     auto runtime = static_cast<Runtime*>(scenes()->add<Runtime>("runtime"));
     runtime->window = m_window;
 
-    scenes()->activate("runtime");
+    auto title = static_cast<Title*>(scenes()->add<Title>("title"));
+    title->window = m_window;
+
+    auto death = static_cast<Death*>(scenes()->add<Death>("death"));
+    death->window = m_window;
+
+    auto win = static_cast<Win*>(scenes()->add<Win>("win"));
+    win->window = m_window;
+
+    scenes()->activate("title");
 }
 
 void Game::onBeforeUpdate() {

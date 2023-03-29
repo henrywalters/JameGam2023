@@ -22,7 +22,7 @@ public:
     float strength = 1;
 
     float calcDamage(float baseDamage) {
-        return baseDamage * strength;
+        return baseDamage * std::log(strength + 1);
     }
 
     void damage(float amount) {

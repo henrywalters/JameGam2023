@@ -12,7 +12,7 @@
 #include "components/tileObject.h"
 
 const hg::Vec2 TILE_SIZE = hg::Vec2(64, 64);
-const static int TILE_COUNT = 15;
+const static int TILE_COUNT = 100;
 
 template <IsTileObject TileType>
 class Map {
@@ -23,7 +23,7 @@ public:
     {}
 
     // Instantiate an entity and add it to the Map
-    hg::Entity* add(std::string texture, hg::Vec2i pos);
+    hg::Entity* add(std::string texture, hg::Vec2i pos, hg::Vec2 size = TILE_SIZE);
 
     // Remove an entity from map (but don't destroy it)
     void remove(hg::Entity* entity);
@@ -40,6 +40,8 @@ public:
 
     bool isValidPos(hg::Vec2i pos) const;
 
+    void clear();
+
     hg::Vec3 getWorldPos(hg::Vec2i mapPos) const;
     hg::Vec2i getMapPos(hg::Vec2 worldPos) const;
 private:
@@ -52,6 +54,18 @@ private:
 
     void throwInvalidPos(hg::Vec2i pos) const;
 };
+
+template<IsTileObject TileType>
+void Map<TileType>::clear() {
+    for (int i = 0; i < TILE_COUNT; i++) {
+        for (int j = 0; j < TILE_COUNT; j++) {
+            auto pos = hg::Vec2i(i, j);
+            for (const auto& entity : at(pos)) {
+                destroy(entity);
+            }
+        }
+    }
+}
 
 template<IsTileObject TileType>
 hg::Vec2i Map<TileType>::getMapPos(hg::Vec2 worldPos) const {
@@ -80,7 +94,7 @@ std::vector<hg::Entity *> Map<TileType>::at(hg::Vec2i pos) {
 }
 
 template<IsTileObject TileType>
-hg::Entity *Map<TileType>::add(std::string texture, hg::Vec2i pos) {
+hg::Entity *Map<TileType>::add(std::string texture, hg::Vec2i pos, hg::Vec2 size) {
 
     throwInvalidPos(pos);
 
@@ -89,7 +103,7 @@ hg::Entity *Map<TileType>::add(std::string texture, hg::Vec2i pos) {
     entity->transform.position[2] = 2;
     auto tile = entity->addComponent<TileType>();
     tile->position = pos;
-    auto sprite = entity->addComponent<hg::graphics::Sprite>(TILE_SIZE);
+    auto sprite = entity->addComponent<hg::graphics::Sprite>(size);
     sprite->quad.offset(TILE_SIZE * 0.5);
     sprite->texture = texture;
 

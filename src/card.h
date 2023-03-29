@@ -50,7 +50,12 @@ const std::vector<CardDefinition> CARD_TYPES = {
         CardDefinition{"Resurrect", "Bring a random card back from the grave.", "card_cross", true, 1},
 };
 
-class Card : public hg::Component {
+class CardComponent : public hg::Component {
+public:
+    CardType type;
+};
+
+class Card {
 public:
 
     CardType type;

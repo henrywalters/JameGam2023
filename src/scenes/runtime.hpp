@@ -19,6 +19,8 @@
 #include "../components/actor.h"
 #include "../components/obstacle.h"
 #include "../components/meleeEnemy.h"
+#include "../components/stairs.h"
+#include "../components/lastEnemy.h"
 
 using namespace hg::graphics;
 
@@ -57,6 +59,9 @@ public:
 
     Window* window;
 
+    void restartGame();
+    void restartLevel();
+
 protected:
 
     void onInit() override;
@@ -66,8 +71,13 @@ protected:
 
 private:
 
+    int m_level = 3;
+
     Deck m_playerDeck;
     std::vector<Card*> m_activePlayerCards;
+
+    std::vector<CardType> m_hand;
+    std::vector<CardType> m_discard;
 
     Dice<6> m_dice;
 
@@ -102,10 +112,15 @@ private:
     void renderText(double dt);
     void renderFocus();
 
+    void reset();
+    void loadLevel(int level);
+
     void activateCard(hg::Entity* entity, CardType type);
     void deactivateCard(hg::Entity* entity, CardType type);
 
     bool attack(hg::Entity* attacker, hg::Entity* enemy, bool& died);
+
+    void killEnemy(hg::Entity* entity);
 
     hg::Vec2i getMousePos();
     hg::Vec2 getGlobalMousePos();
@@ -128,54 +143,16 @@ void Runtime::onInit() {
 
     m_text = std::make_unique<Text>();
 
-    m_player = entities.add();
-
-    Sprite* sprite;
-
-    m_player = m_actors.add("balrug", hg::Vec2i(7, 2));
-    m_player->getComponent<Actor>()->movement = 2;
-    m_player->getComponent<Actor>()->baseMovement = 2;
-    m_player->getComponent<Actor>()->strength = 10;
-    m_player->getComponent<Actor>()->name = "Player";
-
-    m_camera.move(m_player->transform.position, 1);
-
-    auto dwarf = m_actors.add("dwarf", hg::Vec2i(7, 7));
-    dwarf->addComponent<MeleeEnemy>()->target = m_player;
-    dwarf->getComponent<Actor>()->name = "Dwarf";
-
-    auto elf = m_actors.add("elf", hg::Vec2i(2, 7));
-    elf->addComponent<MeleeEnemy>()->target = m_player;
-    elf->getComponent<Actor>()->name = "High Elf";
-
-    for (int i = 0; i <= 10; i++) {
-        m_obstacles.add("wall", hg::Vec2i(i, 0));
-        m_obstacles.add("wall", hg::Vec2i(0, i));
-        m_obstacles.add("wall", hg::Vec2i(i, 10));
-        m_obstacles.add("wall", hg::Vec2i(10, i));
-    }
-
-    m_obstacles.add("water", hg::Vec2i(4, 4));
-    m_obstacles.add("water", hg::Vec2i(4, 5));
-    m_obstacles.add("water", hg::Vec2i(5, 4));
-    m_obstacles.add("water", hg::Vec2i(5, 5));
-
     m_focus = entities.add();
     m_focus->transform.position[2] = 1;
     m_focus->addComponent<Quad>(TILE_SIZE, TILE_SIZE * 0.5);
-
 
     m_pathFinding = std::make_unique<PathFinding>(hg::Vec2i(TILE_COUNT, TILE_COUNT));
     m_pathFindingLine.thickness(3);
     m_pathFindingLineMesh = std::make_unique<MeshInstance>(&m_pathFindingLine);
 
-    m_playerDeck.add(CardType::HealthPotion);
-    m_playerDeck.add(CardType::RunAway);
-    m_playerDeck.add(CardType::FireBlast);
-    m_playerDeck.add(CardType::Resurrect);
-
+    restartGame();
 }
-
 void Runtime::onActivate() {
 
 }
@@ -222,8 +199,8 @@ void Runtime::onUpdate(double dt) {
 
     now = hg::utils::Clock::Now();
 
-    renderSprites();
     renderFocus();
+    renderSprites();
     renderText(dt);
 
     //renderMapAndActors();
@@ -262,6 +239,13 @@ void Runtime::updateFocusState(hg::Vec2i mousePos) {
 
     if (obstacles.size() > 0) {
         m_focusState = FocusState::Obstacle;
+        return;
+    }
+
+    auto props = m_props.at(mousePos);
+
+    if (props.size() > 0) {
+        m_focusState = FocusState::Item;
         return;
     }
 
@@ -310,13 +294,34 @@ bool Runtime::updatePlayer() {
         if (m_focusState == FocusState::Accessible) {
 
             m_pathFinding->setGridAt(m_player->getComponent<Actor>()->position, true);
-
             m_actors.move(m_player, mousePos.cast<int>());
-            m_camera.move(m_player->transform.position, 0.25);
-
+            m_camera.move(m_player->transform.position + hg::Vec3(0, -100, 0), 0.25);
             m_pathFinding->setGridAt(m_player->getComponent<Actor>()->position, false);
 
             return true;
+        }
+
+        if (m_focusState == FocusState::Item && m_props.at(mousePos)[0]->hasComponent<CardComponent>()) {
+            auto cardEntity = m_props.at(mousePos)[0];
+            auto card = cardEntity->getComponent<CardComponent>();
+            m_playerDeck.add(card->type);
+            m_props.destroy(cardEntity);
+
+            m_pathFinding->setGridAt(m_player->getComponent<Actor>()->position, true);
+            m_actors.move(m_player, mousePos.cast<int>());
+            m_camera.move(m_player->transform.position + hg::Vec3(0, -100, 0), 0.25);
+            m_pathFinding->setGridAt(m_player->getComponent<Actor>()->position, false);
+
+            return true;
+        }
+
+        if (m_focusState == FocusState::Item && m_props.at(mousePos)[0]->hasComponent<Stairs>()) {
+            auto stairs = m_props.at(mousePos)[0]->getComponent<Stairs>();
+            m_level = stairs->toLevel;
+            m_discard = m_playerDeck.discard();
+            restartLevel();
+
+            return false;
         }
 
         if (m_focusState == FocusState::Enemy) {
@@ -327,7 +332,7 @@ bool Runtime::updatePlayer() {
             }
 
             if (died) {
-                m_actors.destroy(enemy);
+                killEnemy(enemy);
             }
 
             return true;
@@ -339,7 +344,23 @@ bool Runtime::updatePlayer() {
 
 
 void Runtime::updateEnemies() {
+
     entities.forEach<MeleeEnemy>([&](MeleeEnemy* enemy, hg::Entity* entity) {
+
+        auto sitePath = hg::bresenham(entity->getComponent<Actor>()->position, m_player->getComponent<Actor>()->position);
+
+        bool canSee = true;
+        for (const auto& tile : sitePath) {
+            if (m_obstacles.at(tile).size() > 0) {
+                canSee = false;
+                break;
+            }
+        }
+
+        if (canSee) {
+            enemy->target = m_player;
+        }
+
         if (enemy->target == nullptr) {
             return;
         }
@@ -350,17 +371,16 @@ void Runtime::updateEnemies() {
         auto path = m_pathFinding->search(actor->position, targetActor->position, 2);
 
         if (!path.has_value()) {
-            std::cout << "No path\n";
             return;
         }
 
-        std::cout << "Path Size = " << path.value().size() << "\n";
-
         if (path.value().size() > 0) {
             bool died;
-            std::cout << "ATTACK PLAYER = " << attack(entity, m_player, died) << "\n";
+            attack(entity, m_player, died);
 
-            std::cout << "PLAYER DIED :0 \n";
+            if (died) {
+                game()->scenes()->activate("death");
+            }
         }
 
         m_pathFinding->setGridAt(actor->position, true);
@@ -476,7 +496,7 @@ void Runtime::renderText(double dt) {
     entities.forEach<Actor>([&](auto actor, auto entity) {
         shader->setVec4("textColor", entity == m_player ? Color::blue() : Color::red());
         shader->setMat4("model", entity->transform.getModel());
-        m_text->draw(font, "(" + std::to_string((int) actor->health) + ")", hg::Vec3(0, TILE_SIZE[1] * 0.5, 0), TextHAlignment::Center);
+        m_text->draw(font, "(" + std::to_string((int) actor->health) + ")", hg::Vec3(0, TILE_SIZE[1] * 0.45, 0), TextHAlignment::Center);
     });
 
     shader->setVec4("textColor", hg::graphics::Color::red());
@@ -524,6 +544,9 @@ void Runtime::activateCard(hg::Entity *entity, CardType type) {
 
                         for (auto& actor : actors) {
                             actor->getComponent<Actor>()->damage(FIRE_BLAST_DAMAGE);
+                            if (actor->getComponent<Actor>()->health <= 0) {
+                                killEnemy(actor);
+                            }
                         }
                     }
                 }
@@ -551,5 +574,129 @@ void Runtime::deactivateCard(hg::Entity *entity, CardType type) {
             return;
     }
 }
+
+void Runtime::killEnemy(hg::Entity *entity) {
+
+    if (entity->hasComponent<LastEnemy>()) {
+        game()->scenes()->activate("win");
+    }
+
+    int roll = m_dice.roll();
+
+    if (roll >= 2) {
+        hg::utils::Random rand;
+        int cardType = rand.integer<int>(0, CARD_TYPES.size() - 1);
+        auto card = m_props.add("card_back", entity->getComponent<Actor>()->position, CARD_SIZE * 0.25);
+        card->addComponent<CardComponent>()->type = (CardType) cardType;
+    }
+
+    m_actors.destroy(entity);
+}
+
+void Runtime::reset() {
+    m_playerDeck.clear();
+    m_actors.clear();
+    m_obstacles.clear();
+    m_props.clear();
+}
+
+void Runtime::restartLevel() {
+
+    reset();
+
+    for (const auto& cardType : m_hand) {
+        m_playerDeck.add(cardType);
+    }
+
+    for (const auto& cardType : m_discard) {
+        auto card = m_playerDeck.add(cardType);
+        m_playerDeck.discard(card);
+    }
+    loadLevel(m_level);
+}
+
+void Runtime::restartGame() {
+    reset();
+    m_level = 3;
+    m_playerDeck.add(CardType::HealthPotion);
+    m_playerDeck.add(CardType::RunAway);
+    m_playerDeck.add(CardType::FireBlast);
+    loadLevel(m_level);
+}
+
+void Runtime::loadLevel(int level) {
+
+    m_hand = m_playerDeck.hand();
+    m_discard = m_playerDeck.discard();
+
+    hg::Vec2 actorSize = TILE_SIZE * 0.75;
+
+    auto content = hg::utils::f_readLines(ASSET_DIR + "levels/level_" + std::to_string(level) + ".hg");
+
+    for (int j = 0; j < content.size(); j++) {
+        for (int i = 0; i < content[j].size(); i++) {
+            char c = content[j][i];
+            auto pos = hg::Vec2i(i, j);
+
+            if (c == '#') {
+                m_obstacles.add("wall", pos);
+            } else if (c == 'P') {
+                m_player = m_actors.add("balrug", pos, actorSize);
+                m_player->getComponent<Actor>()->movement = 3;
+                m_player->getComponent<Actor>()->baseMovement = 3;
+                m_player->getComponent<Actor>()->strength = 50;
+                m_player->getComponent<Actor>()->name = "Player";
+                /*
+                if (m_level < 3) {
+                    auto tile = m_props.add("stairs_down", pos);
+                    tile->addComponent<Stairs>()->toLevel = m_level + 1;
+                }
+                 */
+            } else if (c == 'E') {
+                auto elf = m_actors.add("elf", pos, actorSize);
+                elf->addComponent<MeleeEnemy>();
+                auto actor = elf->getComponent<Actor>();
+                actor->movement = 2;
+                actor->baseMovement = 2;
+                actor->strength = 2;
+                actor->name = "Elf";
+            } else if (c == 'D') {
+                auto dwarf = m_actors.add("dwarf", pos, actorSize);
+                dwarf->addComponent<MeleeEnemy>();
+                auto actor = dwarf->getComponent<Actor>();
+                actor->movement = 2;
+                actor->baseMovement = 2;
+                actor->strength = 1;
+                actor->name = "Dwarf";
+            } else if (c == 'C') {
+                auto enemy = m_actors.add("centaur", pos, actorSize);
+                enemy->addComponent<MeleeEnemy>();
+                auto actor = enemy->getComponent<Actor>();
+                actor->movement = 3;
+                actor->baseMovement = 3;
+                actor->attackRange = 2;
+                actor->strength = 2;
+                actor->name = "Centaur";
+            }
+            else if (c == 'A') {
+                auto enemy = m_actors.add("angel", pos, actorSize);
+                enemy->addComponent<MeleeEnemy>();
+                enemy->addComponent<LastEnemy>();
+                auto actor = enemy->getComponent<Actor>();
+                actor->movement = 2;
+                actor->baseMovement = 2;
+                actor->strength = 5;
+                actor->name = "Angel";
+            }
+            else if (c == '1' || c == '2' || c == '3') {
+                auto tile = m_props.add("stairs_up", pos);
+                tile->addComponent<Stairs>()->toLevel = c - '0';
+            }
+        }
+    }
+
+    m_camera.move(m_player->transform.position);
+}
+
 
 #endif
